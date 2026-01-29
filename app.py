@@ -8,54 +8,36 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Trading Bot Frankfurt: Bybit (Scanner) & Binance (Trader) sind BEREIT!"
+    return "Trading Bot Frankfurt: Diagnose-Modus AKTIV!"
 
 def run_scanner():
-    # 1. Verbindung zu Bybit (Frühwarnsystem / Preis-Sensor)
-    bybit = ccxt.bybit({
-        'apiKey': os.environ.get('BYBIT_API_KEY'),
-        'secret': os.environ.get('BYBIT_API_SECRET'),
-        'enableRateLimit': True,
-    })
+    bybit = ccxt.bybit({'apiKey': os.environ.get('BYBIT_API_KEY'), 'secret': os.environ.get('BYBIT_API_SECRET'), 'enableRateLimit': True})
+    binance = ccxt.binance({'apiKey': os.environ.get('BINANCE_API_KEY'), 'secret': os.environ.get('BINANCE_API_SECRET'), 'enableRateLimit': True})
 
-    # 2. Verbindung zu Binance (Dein Handelsplatz)
-    binance = ccxt.binance({
-        'apiKey': os.environ.get('BINANCE_API_KEY'),
-        'secret': os.environ.get('BINANCE_API_SECRET'),
-        'enableRateLimit': True,
-    })
-
-    print("--- 🛰️ BOT STARTET: MULTI-EXCHANGE MODE (FRANKFURT) ---", flush=True)
+    print("--- 🛰️ BOT STARTET: DIAGNOSE-MODUS ---", flush=True)
 
     while True:
+        # TEIL 1: BYBIT SCAN (Sollte immer gehen)
         try:
-            # Daten von Bybit abrufen (Unser Sensor für JTO)
-            ticker_bybit = bybit.fetch_ticker('JTO/USDT')
-            price_bybit = ticker_bybit['last']
-            
-            # Guthaben von Binance abrufen (Alle relevanten Währungen)
-            bal_binance = binance.fetch_balance()
-            
-            usdc_binance = bal_binance.get('USDC', {}).get('free', 0)
-            usdt_binance = bal_binance.get('USDT', {}).get('free', 0)
-            bnb_binance = bal_binance.get('BNB', {}).get('free', 0)
-
-            # Saubere Anzeige in den Render-Logs
-            print(f"📡 SENSOR (Bybit) - JTO: {price_bybit} USDT", flush=True)
-            print(f"🏦 KAPITAL (Binance): {usdc_binance} USDC | {usdt_binance} USDT", flush=True)
-            print(f"⛽ GEBÜHREN (Binance): {bnb_binance} BNB", flush=True)
-            print("--------------------------------------------------", flush=True)
-
+            ticker = bybit.fetch_ticker('JTO/USDT')
+            print(f"✅ Bybit Sensor OK - JTO: {ticker['last']} USDT", flush=True)
         except Exception as e:
-            print(f"❌ Fehler bei Abfrage: {e}", flush=True)
-        
-        # Alle 30 Sekunden scannen
+            print(f"❌ Bybit Fehler: {e}", flush=True)
+
+        # TEIL 2: BINANCE CHECK (Hier suchen wir den Fehler)
+        try:
+            bal = binance.fetch_balance()
+            usdc = bal.get('USDC', {}).get('free', 0)
+            print(f"✅ Binance Verbindung OK - Guthaben: {usdc} USDC", flush=True)
+        except Exception as e:
+            print(f"⚠️ Binance API zickt noch: {e}", flush=True)
+            print("Tipp: Prüfe die Keys in Render auf Leerzeichen!", flush=True)
+
+        print("--------------------------------------------------", flush=True)
         time.sleep(30)
 
-# Startet den Bot-Prozess im Hintergrund
 threading.Thread(target=run_scanner, daemon=True).start()
 
 if __name__ == "__main__":
-    # Port für Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
