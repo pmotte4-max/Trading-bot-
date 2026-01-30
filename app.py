@@ -7,66 +7,63 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# --- VIRTUELLES TEST-KONTO ---
+# --- VIRTUELLES TEST-KONTO (3 Coins gleichzeitig möglich) ---
 account = {
     "usdc": 1000.0,
     "bnb": 50.0,
-    "initial_value": 1050.0, # Startwert gesamt
-    "trades": 0,
-    "pnl": 0.0
+    "initial_value": 1050.0,
+    "active_positions": {}, # Hier speichern wir die 3 Coins
+    "pnl_history": []
 }
-
-apr_memory = {"binance": {}, "bybit": {}}
 
 @app.route('/')
 def home():
-    return f"Trading Bot: Demo läuft. Stand: {account['usdc']:.2f} USDC | PnL: {account['pnl']:.2f}%"
+    return f"Trading Bot Aktiv: {len(account['active_positions'])} Positionen offen. PnL: {account.get('last_pnl', 0):.2f}%"
 
 def run_scanner():
-    print("--- 🛰️ START DER SIMULATION (START: 1000 USDC / 50 BNB) ---", flush=True)
+    print("--- 🛰️ RADAR GESTARTET (3 COINS / 15-MIN PING) ---", flush=True)
 
     while True:
         now = datetime.now()
         
         try:
-            # 1. APR-RADAR (Simulierte Signale für den Testlauf)
-            # Hier imitieren wir einen APR-Sprung bei einem Token (z.B. AXS)
-            test_signal = {"coin": "AXS", "old_apr": 15.0, "new_apr": 65.0} # 333% Anstieg!
-            
-            # 2. STRATEGIE-EXECUTION (Demo)
-            if test_signal['new_apr'] > test_signal['old_apr'] * 1.5:
-                # Simulierter Kauf: 100 USDC investieren
-                fee = 0.10 # 0.10 USD Gebühr in BNB
-                account['usdc'] -= 100
-                account['bnb'] -= fee
-                account['trades'] += 1
-                
-                # Simulierter Profit (z.B. 5% Profit laut Freitags-Regel)
-                profit = 5.0 
-                account['usdc'] += 105.0 # Rückfluss inkl. Gewinn
-                
-                print(f"🚀 SIGNAL: {test_signal['coin']} APR Sprung! Trade ausgeführt.", flush=True)
+            # 1. SIMULATION VON 3 VERSCHIEDENEN SIGNALEN
+            signals = [
+                {"coin": "AXS", "apr_jump": 50},
+                {"coin": "MOVE", "apr_jump": 35},
+                {"coin": "SAFE", "apr_jump": 20}
+            ]
 
-            # 3. DAS 21:00 UHR REPORTING
-            if now.hour == 21 and now.minute == 0:
-                current_total = account['usdc'] + account['bnb']
-                account['pnl'] = ((current_total - account['initial_value']) / account['initial_value']) * 100
+            for sig in signals:
+                coin = sig['coin']
+                # Nur kaufen, wenn wir noch Platz für 3 Coins haben und noch nicht investiert sind
+                if len(account['active_positions']) < 3 and coin not in account['active_positions']:
+                    investment = 200 # Wir setzen 200 USDC pro Coin
+                    account['usdc'] -= investment
+                    account['bnb'] -= 0.15 # Gebühr
+                    account['active_positions'][coin] = investment
+                    print(f"🚀 KAUF: {coin} (APR +{sig['apr_jump']}%) | -200 USDC", flush=True)
+
+            # 2. DER 15-MINUTEN PING (Status-Update)
+            if now.minute % 15 == 0 and now.second < 30:
+                # Berechne aktuellen Wert (Simulierter kleiner Profit von 2% für den Test)
+                current_assets_value = sum(account['active_positions'].values()) * 1.02 
+                total_now = account['usdc'] + account['bnb'] + current_assets_value
+                pnl = ((total_now - account['initial_value']) / account['initial_value']) * 100
+                account['last_pnl'] = pnl
                 
-                print("\n" + "="*40, flush=True)
-                print(f"📊 TAGESBERICHT 21:00 UHR", flush=True)
-                print(f"💰 USDC Stand: {account['usdc']:.2f}", flush=True)
-                print(f"⛽ BNB Stand (Gebühren): {account['bnb']:.2f}", flush=True)
-                print(f"🔄 Trades heute: {account['trades']}", flush=True)
-                print(f"📈 PnL Gesamt: {account['pnl']:.2f}%", flush=True)
-                print("="*40 + "\n", flush=True)
+                print(f"\n⏱️ 15-MINUTEN STATUS ({now.strftime('%H:%M')})", flush=True)
+                print(f"💰 USDC: {account['usdc']:.2f} | BNB: {account['bnb']:.2f}", flush=True)
+                print(f"📊 Aktive Coins: {list(account['active_positions'].keys())}", flush=True)
+                print(f"📈 Aktuelle PnL: {pnl:.2f}%", flush=True)
+                print("-" * 30, flush=True)
                 
-                # Um Mehrfach-Reports in der gleichen Minute zu verhindern
-                time.sleep(61)
+                time.sleep(31) # Verhindert Doppel-Logs in der gleichen Minute
 
         except Exception as e:
             print(f"⚠️ Fehler: {e}", flush=True)
 
-        time.sleep(30) # Check alle 30 Sekunden
+        time.sleep(30)
 
 threading.Thread(target=run_scanner, daemon=True).start()
 
