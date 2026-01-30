@@ -1,72 +1,92 @@
 import os
-import ccxt
 import time
-from flask import Flask
+import requests
 import threading
+from flask import Flask
 from datetime import datetime
 
 app = Flask(__name__)
 
-# --- VIRTUELLES TEST-KONTO (3 Coins gleichzeitig möglich) ---
+# --- DEINE TELEGRAM DATEN (BEREITS EINGEFÜGT) ---
+TELEGRAM_TOKEN = "8597158635:AAFL3ah1yxQwXV9ntnChwY9sZRl6mcemt5s"
+TELEGRAM_CHAT_ID = 5810124088
+
+# --- VIRTUELLES KONTO FÜR DEN TRADING BOT ---
 account = {
     "usdc": 1000.0,
     "bnb": 50.0,
     "initial_value": 1050.0,
-    "active_positions": {}, # Hier speichern wir die 3 Coins
-    "pnl_history": []
+    "active_positions": {},
+    "last_pnl": 0.0
 }
+
+def send_telegram(message):
+    """Hilfsfunktion für Telegram-Nachrichten"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Telegram Fehler: {e}")
 
 @app.route('/')
 def home():
-    return f"Trading Bot Aktiv: {len(account['active_positions'])} Positionen offen. PnL: {account.get('last_pnl', 0):.2f}%"
+    # Anzeige für die Render-Webseite
+    pos_list = ", ".join(account['active_positions'].keys()) if account['active_positions'] else "Keine"
+    return f"Bot läuft! <br>Aktive Coins: {pos_list} <br>Aktuelle PnL: {account['last_pnl']:.2f}%"
 
 def run_scanner():
-    print("--- 🛰️ RADAR GESTARTET (3 COINS / 15-MIN PING) ---", flush=True)
+    print("--- 🚀 BOT GESTARTET: 3-COIN-MODUS & TELEGRAM ---")
+    # Erste Nachricht beim Start
+    send_telegram("✅ *Trading Bot Online!*\nIch überwache jetzt AXS, MOVE & SAFE für dich.")
 
     while True:
         now = datetime.now()
         
         try:
-            # 1. SIMULATION VON 3 VERSCHIEDENEN SIGNALEN
+            # 1. SCAN LOGIK: Simuliert Signale für 3 verschiedene Coins
             signals = [
-                {"coin": "AXS", "apr_jump": 50},
-                {"coin": "MOVE", "apr_jump": 35},
-                {"coin": "SAFE", "apr_jump": 20}
+                {"coin": "AXS", "apr": 55},
+                {"coin": "MOVE", "apr": 42},
+                {"coin": "SAFE", "apr": 28}
             ]
 
             for sig in signals:
                 coin = sig['coin']
-                # Nur kaufen, wenn wir noch Platz für 3 Coins haben und noch nicht investiert sind
+                # Kaufe bis zu 3 verschiedene Coins gleichzeitig
                 if len(account['active_positions']) < 3 and coin not in account['active_positions']:
-                    investment = 200 # Wir setzen 200 USDC pro Coin
+                    investment = 200.0
                     account['usdc'] -= investment
-                    account['bnb'] -= 0.15 # Gebühr
+                    account['bnb'] -= 0.15 # Simulierte Netzwerkgebühr
                     account['active_positions'][coin] = investment
-                    print(f"🚀 KAUF: {coin} (APR +{sig['apr_jump']}%) | -200 USDC", flush=True)
+                    send_telegram(f"🚀 *Kauf-Signal:* {coin}\n📈 APR Sprung: {sig['apr']}%\n💰 Einsatz: 200.00 USDC")
 
-            # 2. DER 15-MINUTEN PING (Status-Update)
+            # 2. 15-MINUTEN STATUS-UPDATE PER TELEGRAM (z.B. 14:00, 14:15, 14:30...)
             if now.minute % 15 == 0 and now.second < 30:
-                # Berechne aktuellen Wert (Simulierter kleiner Profit von 2% für den Test)
-                current_assets_value = sum(account['active_positions'].values()) * 1.02 
-                total_now = account['usdc'] + account['bnb'] + current_assets_value
+                # Simulierter Wert (kleine Schwankung für den Test)
+                current_value = sum(account['active_positions'].values()) * 1.015 
+                total_now = account['usdc'] + account['bnb'] + current_value
                 pnl = ((total_now - account['initial_value']) / account['initial_value']) * 100
                 account['last_pnl'] = pnl
                 
-                print(f"\n⏱️ 15-MINUTEN STATUS ({now.strftime('%H:%M')})", flush=True)
-                print(f"💰 USDC: {account['usdc']:.2f} | BNB: {account['bnb']:.2f}", flush=True)
-                print(f"📊 Aktive Coins: {list(account['active_positions'].keys())}", flush=True)
-                print(f"📈 Aktuelle PnL: {pnl:.2f}%", flush=True)
-                print("-" * 30, flush=True)
-                
-                time.sleep(31) # Verhindert Doppel-Logs in der gleichen Minute
+                status_msg = (
+                    f"⏱️ *15-Minuten Status*\n"
+                    f"💰 Kontostand: {total_now:.2f} (USDC/BNB)\n"
+                    f"📈 Aktuelle PnL: *{pnl:.2f}%*\n"
+                    f"📊 Aktive Coins: {', '.join(account['active_positions'].keys())}"
+                )
+                send_telegram(status_msg)
+                time.sleep(31) # Verhindert, dass er in derselben Minute zweimal sendet
 
         except Exception as e:
-            print(f"⚠️ Fehler: {e}", flush=True)
+            print(f"Fehler im Loop: {e}")
 
-        time.sleep(30)
+        time.sleep(30) # Scant alle 30 Sekunden
 
+# Startet den Scanner in einem Hintergrund-Thread
 threading.Thread(target=run_scanner, daemon=True).start()
 
 if __name__ == "__main__":
+    # Port-Einstellung für Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
