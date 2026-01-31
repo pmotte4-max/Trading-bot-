@@ -14,10 +14,9 @@ TELEGRAM_TOKEN = "8597158635:AAFL3ah1yxQwXV9ntnChwY9sZRl6mcemt5s"
 TELEGRAM_CHAT_ID = 5810124088
 
 # --- SETTINGS ---
-MIN_APR_THRESHOLD = 10.0  # Exit unter 10%
-SCAN_INTERVAL = 60        # Scan alle 60 Sek.
+MIN_APR_THRESHOLD = 10.0  
+SCAN_INTERVAL = 60        
 
-# Interner Speicher für die Simulation
 account = {"active_positions": {}}
 
 def send_telegram(message):
@@ -31,11 +30,10 @@ def get_bybit_apr_live():
     url = "https://api.bybit.com/v5/earn/product-info"
     params = {"category": "FlexibleSaving"}
     try:
-        # Öffentliche Abfrage der Earn-Produkte
         response = requests.get(url, params=params, timeout=10).json()
         if response.get("retCode") == 0:
             products = response["result"]["list"]
-            # Umrechnung in Prozent: 0.113 -> 11.3%
+            # Erstellt Liste mit {Coin: APR in %}
             return {p["coin"]: float(p["estimateApr"]) * 100 for p in products}
     except Exception as e:
         print(f"Bybit API Error: {e}")
@@ -43,43 +41,28 @@ def get_bybit_apr_live():
 
 @app.route('/')
 def home():
-    # Diese Seite wird von cron-job.org alle 5 Min aufgerufen
-    return f"Bot ist wach. Letzter Check: {datetime.now().strftime('%H:%M:%S')}"
+    return f"<h1>Trading Bot Status</h1><p>Scanner aktiv. Letzter Check: {datetime.now().strftime('%H:%M:%S')}</p>"
 
 def trading_logic():
-    send_telegram("🚀 *Live-Daten-Scanner gestartet!* (Trockenübung)")
+    send_telegram("📡 *Echtzeit-Scanner aktiviert!* Ich ziehe jetzt Live-Daten von Bybit.")
     
     while True:
-        # 1. Echte Bybit Daten holen
         bybit_live = get_bybit_apr_live()
+        focus_coins = ["AXS", "MOVE", "SAFE"]
         
-        # 2. Binance Vergleichswerte (Simulation)
-        binance_sim = {"AXS": 115.0, "MOVE": 45.0, "SAFE": 8.0} 
-        
-        # Alle verfügbaren Coins sammeln
-        all_coins = set(bybit_live.keys()) | set(binance_sim.keys())
-        
-        for coin in ["AXS", "MOVE", "SAFE"]: # Fokus auf deine Top-Coins
-            apr_bybit = bybit_live.get(coin, 0)
-            apr_binance = binance_sim.get(coin, 0)
+        for coin in focus_coins:
+            best_apr = bybit_live.get(coin, 0.0)
             
-            best_apr = max(apr_bybit, apr_binance)
-            source = "Bybit (LIVE)" if apr_bybit > apr_binance else "Binance (SIM)"
-
-            # EXIT LOGIK
             if coin in account['active_positions']:
                 if best_apr < MIN_APR_THRESHOLD:
                     del account['active_positions'][coin]
-                    send_telegram(f"📉 *ALARM - SELL:* {coin}\nAPR auf {best_apr:.2f}% gefallen ({source}).\nPosition (virtuell) geschlossen.")
-
-            # ENTRY LOGIK
+                    send_telegram(f"📉 *ALARM - SELL:* {coin}\nAPR auf {best_apr:.2f}% gefallen.\n(Simulation: Position geschlossen)")
             elif best_apr > 20.0 and len(account['active_positions']) < 3:
-                account['active_positions'][coin] = {"apr": best_apr, "source": source}
-                send_telegram(f"💎 *CHANCE:* {coin}\n🔥 Echtzeit APR: {best_apr:.2f}%\n🏦 Quelle: {source}\nStatus: Trockenübung läuft.")
-
+                account['active_positions'][coin] = {"apr": best_apr}
+                send_telegram(f"💎 *LIVE-CHANCE:* {coin}\n🔥 Echtzeit APR: {best_apr:.2f}%\n🏦 Börse: Bybit\nStatus: Trockenübung läuft.")
+        
         time.sleep(SCAN_INTERVAL)
 
-# Bot-Logik in separatem Thread starten
 threading.Thread(target=trading_logic, daemon=True).start()
 
 if __name__ == "__main__":
