@@ -4,80 +4,73 @@ import requests
 import threading
 import telebot
 from flask import Flask
-from datetime import datetime
 
+# --- KONFIGURATION ---
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- CONFIG (Werte kommen sicher aus Render) ---
-TELEGRAM_TOKEN = "8597158635:AAFL3ah1yxQwXV9ntnChwY9sZRl6mcemt5s"
-TELEGRAM_CHAT_ID = 5810124088
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
-# Diese Namen müssen exakt mit deinen Render-Variablen übereinstimmen:
-BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
-BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
-
 # --- BYBIT API LOGIK ---
-def get_bybit_apr_live():
-    """Holt die echten Live-APR von Bybit Flexible Savings"""
-    url = "https://api.bybit.com/v5/earn/product-info"
-    params = {"category": "FlexibleSaving"}
+def get_bybit_apr():
+    url = "https://api.bybit.com/v5/asset/staking/product/list"
+    params = {"coin": "", "productType": "FLEXIBLE"}
     try:
-        response = requests.get(url, params=params, timeout=10).json()
-        if response.get("retCode") == 0:
-            products = response["result"]["list"]
-            # Umrechnung und Sortierung nach höchster APR
-            data = {p["coin"]: float(p["estimateApr"]) * 100 for p in products}
-            return dict(sorted(data.items(), key=lambda item: item[1], reverse=True))
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        if data.get("retCode") == 0:
+            products = data["result"]["list"]
+            # Liste sortieren nach APR (höchste zuerst)
+            sorted_list = sorted(products, key=lambda x: float(x.get("estimateApr", 0)), reverse=True)
+            return sorted_list
+        return None
     except Exception as e:
-        print(f"Bybit API Fehler: {e}")
-    return {}
+        print(f"Bybit Error: {e}")
+        return None
 
-# --- INTERAKTIVE ANTWORT-FUNKTION ---
+# --- TELEGRAM BEFEHLE ---
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "Willkommen beim Trading Bot! 📈\nSchreibe 'Status', um die aktuellen Top 3 APRs zu sehen.")
+
 @bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    # Nur antworten, wenn du schreibst
-    if str(message.chat.id) == str(TELEGRAM_CHAT_ID):
-        aprs = get_bybit_apr_live()
-        if aprs:
-            top_3 = list(aprs.items())[:3]
-            reply = "👋 *Ich habe deine Nachricht erhalten!*\n\nHier sind die aktuellen Top 3 APRs:\n"
-            for coin, val in top_3:
-                reply += f"💰 *{coin}*: {val:.2f}%\n"
-            reply += "\nWas möchtest du als Nächstes wissen?"
+def handle_messages(message):
+    text = message.text.lower()
+    if "status" in text:
+        bot.reply_to(message, "Abfrage läuft... 📊")
+        data = get_bybit_apr()
+        if data:
+            top_3 = data[:3]
+            res = "🚀 **Top 3 Bybit APR (Flexible):**\n\n"
+            for item in top_3:
+                res += f"💰 {item['coin']}: {float(item['estimateApr'])*100:.2f}% APR\n"
+            bot.send_message(message.chat.id, res, parse_mode="Markdown")
         else:
-            reply = "⚠️ Konnte aktuell keine Daten von Bybit abrufen. Prüfe die API-Keys!"
-        
-        bot.reply_to(message, reply, parse_mode="Markdown")
+            bot.reply_to(message, "Konnte Daten von Bybit nicht laden. ❌")
+    else:
+        bot.reply_to(message, "Ich verstehe nur 'Status'. Versuche es mal! 😉")
 
-# --- 15-MINUTEN AUTOMATIK-TICKER ---
+# --- AUTOMATISCHER TICKER (Alle 15 Min) ---
 def scheduled_ticker():
     while True:
-        # Alle 15 Minuten (900 Sekunden)
-        aprs = get_bybit_apr_live()
-        if aprs:
-            top_5 = list(aprs.items())[:5]
-            msg = "📊 *15-Minuten Update (Top Sprünge)*\n\n"
-            for coin, val in top_5:
-                emoji = "🔥" if val > 50 else "✅"
-                msg += f"{emoji} {coin}: {val:.2f}%\n"
-            
-            bot.send_message(TELEGRAM_CHAT_ID, msg, parse_mode="Markdown")
-        
-        time.sleep(900)
+        data = get_bybit_apr()
+        if data:
+            top = data[0]
+            msg = f"🔔 **15-Minuten Update:**\nDer Top-Coin ist aktuell **{top['coin']}** mit {float(top['estimateApr'])*100:.2f}% APR!"
+            bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
+        time.sleep(900) # 900 Sekunden = 15 Minuten
 
+# --- FLASK WEB-SERVER (Für Render & Cron-Job) ---
 @app.route('/')
-def home():
-    return f"Bot ist aktiv. Letzter System-Check: {datetime.now().strftime('%H:%M:%S')}"
-
-# Threads für Hintergrund-Aufgaben starten
-if __name__ != "__main__": # Wichtig für Render/Gunicorn
-    threading.Thread(target=scheduled_ticker, daemon=True).start()
-    threading.Thread(target=lambda: bot.infinity_polling(), daemon=True).start()
+def health_check():
+    return "Trading Bot is running!", 200
 
 if __name__ == "__main__":
-    # Lokaler Start (für Tests)
+    # Ticker-Thread starten
     threading.Thread(target=scheduled_ticker, daemon=True).start()
+    # Bot-Thread starten
     threading.Thread(target=lambda: bot.infinity_polling(), daemon=True).start()
+    
+    # Port für Render setzen
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
